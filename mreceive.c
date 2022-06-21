@@ -30,6 +30,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
+#include <sys/resource.h>
 
 #define TRUE 1
 #define FALSE 0
@@ -276,6 +277,15 @@ int main(int argc, char *argv[])
 	}
 
 	fprintf(stderr, "Now receiving from multicast group: %s@%s:%d\n", (TEST_ADDR_SRV ? TEST_ADDR_SRV : "*"), TEST_ADDR, TEST_PORT);
+
+	if (setpriority(PRIO_PROCESS, 0, 0) != 0) {
+		fprintf(stderr, "setpriority 0 failed.\n");
+	} else if (setpriority(PRIO_PROCESS, 0, -1) != 0) {
+		fprintf(stderr, "setpriority -1 failed. Must live with prio 0\n");
+	}
+	errno = 0;
+	int curPrio = getpriority(PRIO_PROCESS, 0);
+	if (errno == 0) fprintf(stderr, "running with process priority %d\n", curPrio);
 
 	long sumReceivedBytes = 0L;
 	time_t nextProgress = 0L;
