@@ -31,6 +31,7 @@
 #include <arpa/inet.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <sys/errno.h>
 
 #define TRUE 1
 #define FALSE 0
