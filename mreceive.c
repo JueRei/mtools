@@ -70,7 +70,7 @@ Usage: mreceive [-g GROUP] [-p PORT] [-i ADDRESS ] ... [-i ADDRESS] [-n]\n\
                          a string of characters.  Use this with `msend -n`\n\
   -b                     Expect binary contents: Display only the size of the received buffers every 10 secs\n\
   -o FILE                write received data to FILE, implies -b. use \"-\" for FILE to write to stdout\n\
-  -t SEC                 run for SEC seconds (default 0 = forever)\n\
+  -t SEC                 run for SEC seconds (default 0 => forever)\n\
   -v                     Print version information.\n\
   -h                     Print the command usage.\n\n", VERSION);
 }
@@ -78,7 +78,7 @@ Usage: mreceive [-g GROUP] [-p PORT] [-i ADDRESS ] ... [-i ADDRESS] [-n]\n\
 int main(int argc, char *argv[])
 {
 	struct sockaddr_in stLocal, stFrom;
-	unsigned char achIn[BUFSIZE+1];
+	unsigned char receiveBuf[BUFSIZE + 1];
 	int s, i;
 	struct ip_mreq stMreq;
 	struct ip_mreq_source stMreqSrc;
@@ -92,7 +92,7 @@ int main(int argc, char *argv[])
 	int curtime;
 	struct timeval tv;
 
-	memset (achIn, 0, sizeof (achIn));
+	memset (receiveBuf, 0, sizeof (receiveBuf));
 	memset (&stMreq, 0, sizeof (stMreq));
 	memset (&stMreqSrc, 0, sizeof (stMreqSrc));
 
@@ -260,6 +260,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	// see https://man7.org/linux/man-pages/man7/ip.7.html for optnames
 	/* set TTL to traverse up to multiple routers */
 	iTmp = TTL_VALUE;
 	iRet = setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, (char *)&iTmp, sizeof(iTmp));
@@ -277,6 +278,15 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	/* don't blindly receive all multicats messages, only the ones we're subscribed to */
+	/* iTmp = TRUE; */
+	iTmp = FALSE;
+	iRet = setsockopt(s, IPPROTO_IP, IP_MULTICAST_ALL, (char *)&iTmp, sizeof(iTmp));
+	if (iRet == SOCKET_ERROR) {
+		fprintf(stderr, "setsockopt() IP_MULTICAST_ALL failed.\n");
+		exit(1);
+	}
+
 	fprintf(stderr, "Now receiving from multicast group: %s@%s:%d\n", (TEST_ADDR_SRV ? TEST_ADDR_SRV : "*"), TEST_ADDR, TEST_PORT);
 
 	if (setpriority(PRIO_PROCESS, 0, 0) != 0) {
@@ -289,28 +299,31 @@ int main(int argc, char *argv[])
 	if (errno == 0) fprintf(stderr, "running with process priority %d\n", curPrio);
 
 	long sumReceivedBytes = 0L;
-	time_t nextProgress = 0L;
+	long sumProgressReceivedBytes = 0L;
+	time_t lastProgress = time(NULL);
+
 	for (i = 0;; i++) {
-		socklen_t addr_size = sizeof(struct sockaddr_in);
+		socklen_t addr_size = sizeof(stFrom);
 		static int iCounter = 1;
 
 		/* receive from the multicast address */
-
-		iRet = recvfrom(s, achIn, BUFSIZE, 0, (struct sockaddr *)&stFrom, &addr_size);
+		iRet = recvfrom(s, receiveBuf, BUFSIZE, 0, (struct sockaddr *)&stFrom, &addr_size);
 		if (iRet < 0) {
 			if (outf > 0) {
 				close(outf);
 				outf = -1;
 			}
-			fprintf(stderr, "recvfrom() failed.\n");
+			perror("recvfrom failed");
+			fprintf(stderr, "received %ld\n", sumReceivedBytes);
 			exit(1);
 		}
 
 		if (outf > 0) {
-			write(outf, achIn, iRet);
+			write(outf, receiveBuf, iRet);
 		}
 
 		sumReceivedBytes += iRet;
+		sumProgressReceivedBytes += iRet;
 		time_t now = time(NULL);
 
 		if (NUM) {
@@ -319,9 +332,8 @@ int main(int argc, char *argv[])
 			if (i == 0)
 				starttime = tv.tv_sec * 1000000 + tv.tv_usec;
 			curtime = tv.tv_sec * 1000000 + tv.tv_usec - starttime;
-			numreceived =
-					(unsigned int) achIn[0] + ((unsigned int) (achIn[1]) << 8) + ((unsigned int) (achIn[2]) << 16) +
-					((unsigned int) (achIn[3]) >> 24);
+			numreceived = (unsigned int) receiveBuf[0] + ((unsigned int) (receiveBuf[1]) << 8) + ((unsigned int) (receiveBuf[2]) << 16) +
+			              ((unsigned int) (receiveBuf[3]) >> 24);
 			fprintf(stdout, "%5d\t%s:%5d\t%d.%03d\t%5d\n", iCounter, inet_ntoa(stFrom.sin_addr), ntohs(stFrom.sin_port),
 			        curtime / 1000000, (curtime % 1000000) / 1000, numreceived);
 			fflush(stdout);
@@ -341,14 +353,17 @@ int main(int argc, char *argv[])
 			}
 			rcvCountOld = rcvCountNew;
 		} else if (isExpectBinary) {
-			if (now > nextProgress) {
-				fprintf(stderr, "Receive msg %d %d bytes (total %ld) from %s:%d\n",
-				       iCounter, iRet, sumReceivedBytes, inet_ntoa(stFrom.sin_addr), ntohs(stFrom.sin_port));
-				nextProgress = now + 10L;
+			if (now >= lastProgress+10) {
+				fprintf(stderr, "Receive msg %d %d bytes (total %ld) from %s:%d (%.3f KB/sec)\n",
+				       iCounter, iRet, sumReceivedBytes, inet_ntoa(stFrom.sin_addr), ntohs(stFrom.sin_port),
+				        ((double)sumProgressReceivedBytes / 1024.0) / (double)(now - lastProgress)
+				);
+				lastProgress = now;
+				sumProgressReceivedBytes = 0L;
 			}
 		} else {
 			fprintf(stderr, "Receive msg %d bytes from %s:%d: %s\n",
-			       iCounter, inet_ntoa(stFrom.sin_addr), ntohs(stFrom.sin_port), achIn);
+			        iCounter, inet_ntoa(stFrom.sin_addr), ntohs(stFrom.sin_port), receiveBuf);
 		}
 		iCounter++;
 
