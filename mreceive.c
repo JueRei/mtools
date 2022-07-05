@@ -270,7 +270,6 @@ int main(int argc, char *argv[])
 	}
 
 	/* disable loopback */
-	/* iTmp = TRUE; */
 	iTmp = FALSE;
 	iRet = setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&iTmp, sizeof(iTmp));
 	if (iRet == SOCKET_ERROR) {
@@ -279,7 +278,8 @@ int main(int argc, char *argv[])
 	}
 
 	/* don't blindly receive all multicats messages, only the ones we're subscribed to */
-	/* iTmp = TRUE; */
+	// see https://stackoverflow.com/questions/2741611/receiving-multiple-multicast-feeds-on-the-same-port-c-linux/2741989#2741989
+	// and https://bugzilla.redhat.com/show_bug.cgi?id=231899 for a possibly other solution (by not binding the receiving socket to INADDR_ANY)
 	iTmp = FALSE;
 	iRet = setsockopt(s, IPPROTO_IP, IP_MULTICAST_ALL, (char *)&iTmp, sizeof(iTmp));
 	if (iRet == SOCKET_ERROR) {
